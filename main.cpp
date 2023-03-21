@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include "ggml.h"
 
 #include "utils.h"
@@ -32,8 +33,8 @@
 static const std::map<int, int> LLAMA_N_PARTS = {
     { 4096, 1 },
     { 5120, 1 },
-    { 6656, 4 },
-    { 8192, 8 },
+    { 6656, 1 },
+    { 8192, 1 },
 };
 
 // default hparams (LLaMA 7B)
@@ -800,9 +801,6 @@ int main(int argc, char ** argv) {
     params.temp = 0.1f;
     params.top_p = 0.95f;
     params.n_ctx = 2048;
-    params.interactive = true;
-    params.interactive_start = true;
-    params.use_color = true;
     params.model = "ggml-alpaca-7b-q4.bin";
 
     if (gpt_params_parse(argc, argv, params) == false) {
@@ -856,27 +854,21 @@ int main(int argc, char ** argv) {
     // Add a space in front of the first character to match OG llama tokenizer behavior
     // params.prompt.insert(0, 1, ' ');
     // tokenize the prompt
-    std::vector<gpt_vocab::id> embd_inp;// = ::llama_tokenize(vocab, params.prompt, true);
+    std::vector<gpt_vocab::id> embd_inp = ::llama_tokenize(vocab, params.prompt, true);
 
-    // params.n_predict = std::min(params.n_predict, model.hparams.n_ctx - (int) embd_inp.size());
+    params.n_predict = std::min(params.n_predict, model.hparams.n_ctx - (int) embd_inp.size());
 
-    // // tokenize the reverse prompt
-    // std::vector<gpt_vocab::id> antiprompt_inp = ::llama_tokenize(vocab, params.antiprompt, false);
 
-    // fprintf(stderr, "\n");
-    // fprintf(stderr, "%s: prompt: '%s'\n", __func__, params.prompt.c_str());
-    // fprintf(stderr, "%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
-    // for (int i = 0; i < (int) embd_inp.size(); i++) {
-    //     fprintf(stderr, "%6d -> '%s'\n", embd_inp[i], vocab.id_to_token.at(embd_inp[i]).c_str());
-    // }
-    // fprintf(stderr, "\n");
+    // tokenize the reverse prompt
+    std::vector<gpt_vocab::id> antiprompt_inp = ::llama_tokenize(vocab, params.antiprompt, false);
 
-    std::vector<gpt_vocab::id> instruct_inp = ::llama_tokenize(vocab, " Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n", true);
-    std::vector<gpt_vocab::id> prompt_inp = ::llama_tokenize(vocab, "### Instruction:\n\n", true);
-    std::vector<gpt_vocab::id> response_inp = ::llama_tokenize(vocab, "### Response:\n\n", false);
-
-    embd_inp.insert(embd_inp.end(), instruct_inp.begin(), instruct_inp.end());
-
+    fprintf(stderr, "\n");
+    fprintf(stderr, "%s: prompt: '%s'\n", __func__, params.prompt.c_str());
+    fprintf(stderr, "%s: number of tokens in prompt = %zu\n", __func__, embd_inp.size());
+    for (int i = 0; i < (int) embd_inp.size(); i++) {
+        fprintf(stderr, "%6d -> '%s'\n", embd_inp[i], vocab.id_to_token.at(embd_inp[i]).c_str());
+    }
+    fprintf(stderr, "\n");
 
     if (params.interactive) {
 #if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
@@ -897,14 +889,14 @@ int main(int argc, char ** argv) {
 
         fprintf(stderr, "%s: interactive mode on.\n", __func__);
 
-        // if(antiprompt_inp.size()) {
-        //     fprintf(stderr, "%s: reverse prompt: '%s'\n", __func__, params.antiprompt.c_str());
-        //     fprintf(stderr, "%s: number of tokens in reverse prompt = %zu\n", __func__, antiprompt_inp.size());
-        //     for (int i = 0; i < (int) antiprompt_inp.size(); i++) {
-        //         fprintf(stderr, "%6d -> '%s'\n", antiprompt_inp[i], vocab.id_to_token.at(antiprompt_inp[i]).c_str());
-        //     }
-        //     fprintf(stderr, "\n");
-        // }
+        if(antiprompt_inp.size()) {
+            fprintf(stderr, "%s: reverse prompt: '%s'\n", __func__, params.antiprompt.c_str());
+            fprintf(stderr, "%s: number of tokens in reverse prompt = %zu\n", __func__, antiprompt_inp.size());
+            for (int i = 0; i < (int) antiprompt_inp.size(); i++) {
+                fprintf(stderr, "%6d -> '%s'\n", antiprompt_inp[i], vocab.id_to_token.at(antiprompt_inp[i]).c_str());
+            }
+            fprintf(stderr, "\n");
+        }
     }
     fprintf(stderr, "sampling parameters: temp = %f, top_k = %d, top_p = %f, repeat_last_n = %i, repeat_penalty = %f\n", params.temp, params.top_k, params.top_p, params.repeat_last_n, params.repeat_penalty);
     fprintf(stderr, "\n\n");
@@ -932,7 +924,7 @@ int main(int argc, char ** argv) {
     // we may want to slide the input window along with the context, but for now we restrict to the context length
     int remaining_tokens = model.hparams.n_ctx - embd_inp.size();
     int input_consumed = 0;
-    bool input_noecho = true;
+    bool input_noecho = false;
 
     // prompt user immediately after the starting prompt has been loaded
     if (params.interactive_start) {
@@ -962,7 +954,7 @@ int main(int argc, char ** argv) {
         n_past += embd.size();
         embd.clear();
 
-        if (embd_inp.size() <= input_consumed && !is_interacting) {
+        if (embd_inp.size() <= input_consumed) {
             // out of user input, sample next token
             const float top_k = params.top_k;
             const float top_p = params.top_p;
@@ -1024,19 +1016,11 @@ int main(int argc, char ** argv) {
         // check if we should prompt the user for more
         if (params.interactive && embd_inp.size() <= input_consumed) {
             // check for reverse prompt
-            // if (antiprompt_inp.size() && std::equal(antiprompt_inp.rbegin(), antiprompt_inp.rend(), last_n_tokens.rbegin())) {
-            //     // reverse prompt found
-            //     is_interacting = true;
-            // }
+            if (antiprompt_inp.size() && std::equal(antiprompt_inp.rbegin(), antiprompt_inp.rend(), last_n_tokens.rbegin())) {
+                // reverse prompt found
+                is_interacting = true;
+            }
             if (is_interacting) {
-                // input_consumed =  0;
-                // embd_inp.erase(embd_inp.begin());
-                input_consumed = embd_inp.size();
-                embd_inp.insert(embd_inp.end(), prompt_inp.begin(), prompt_inp.end());
-                
-
-                printf("\n> ");
-
                 // currently being interactive
                 bool another_line=true;
                 while (another_line) {
@@ -1063,9 +1047,7 @@ int main(int argc, char ** argv) {
 
                     std::vector<gpt_vocab::id> line_inp = ::llama_tokenize(vocab, buf, false);
                     embd_inp.insert(embd_inp.end(), line_inp.begin(), line_inp.end());
-                    embd_inp.insert(embd_inp.end(), response_inp.begin(), response_inp.end());
-
-                    remaining_tokens -= prompt_inp.size() + line_inp.size() + response_inp.size();
+                    remaining_tokens -= line_inp.size();
 
                     input_noecho = true; // do not echo this again
                 }
@@ -1076,9 +1058,8 @@ int main(int argc, char ** argv) {
 
         // end of text token
         if (embd.back() == 2) {
-            // fprintf(stderr, " [end of text]\n");
-            is_interacting = true;
-            continue;
+            fprintf(stderr, " [end of text]\n");
+            break;
         }
     }
 
