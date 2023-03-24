@@ -17,6 +17,8 @@ option(LLAMA_SANITIZE_THREAD         "llama: enable thread sanitizer"    OFF)
 option(LLAMA_SANITIZE_ADDRESS        "llama: enable address sanitizer"   OFF)
 option(LLAMA_SANITIZE_UNDEFINED      "llama: enable undefined sanitizer" OFF)
 
+option(LLAMA_BUILD_SERVER               "llama: build a server with drogon"     ON)
+
 if (APPLE)
     option(LLAMA_NO_ACCELERATE       "llama: disable Accelerate framework" OFF)
     option(LLAMA_NO_AVX              "llama: disable AVX" OFF)
@@ -107,7 +109,8 @@ endif()
 add_executable(main
     main.cpp
     utils.cpp
-    utils.h)
+    utils.h
+    httplib.h)
 
 add_executable(quantize
     quantize.cpp
@@ -118,6 +121,10 @@ add_library(ggml
     ggml.c
     ggml.h)
 
+if (LLAMA_BUILD_SERVER)
+set(LLAMA_EXTRA_FLAGS ${LLAMA_EXTRA_FLAGS} -DLLAMA_BUILD_SERVER)
+endif()
+
 target_compile_definitions(ggml PUBLIC ${LLAMA_EXTRA_FLAGS})
 target_compile_definitions(main PUBLIC ${LLAMA_EXTRA_FLAGS})
 target_compile_definitions(quantize PUBLIC ${LLAMA_EXTRA_FLAGS})
@@ -126,3 +133,22 @@ target_link_libraries(ggml PRIVATE ${LLAMA_EXTRA_LIBS})
 target_include_directories(ggml PUBLIC .)
 target_link_libraries(quantize PRIVATE ggml)
 target_link_libraries(main PRIVATE ggml)
+
+if (LLAMA_BUILD_SERVER)
+# Typically you don't care so much for a third party library's tests to be
+# run from your own project's code.
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+
+# If you only include this third party in PRIVATE source files, you do not
+# need to install it when your main project gets installed.
+# set(JSON_Install OFF CACHE INTERNAL "")
+
+# Don't use include(nlohmann_json/CMakeLists.txt) since that carries with it
+# unintended consequences that will break the build.  It's generally
+# discouraged (although not necessarily well documented as such) to use
+# include(...) for pulling in other CMake projects anyways.
+add_subdirectory(lib/nlohmann_json)
+target_link_libraries(main PRIVATE ggml nlohmann_json::nlohmann_json)
+elseif()
+target_link_libraries(main PRIVATE ggml)
+endif()
