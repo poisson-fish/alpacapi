@@ -1232,7 +1232,9 @@ std::string queryModel(llama_model& model, gpt_vocab& vocab, gpt_params& params)
 		}
 		// end of text token
 		if (embd.back() == 2) {
-
+			if (result[0] == ' ') {
+				result = result.substr(1); //Get rid of extra beginning space
+			}
 			return result + " [end of text]\n";
 		}
 	}
@@ -1297,7 +1299,8 @@ int main(int argc, char** argv) {
 
 	svr.Post("/generate", [&params, &vocab, &model](const httplib::Request& req, httplib::Response& res) {
 		const json req_params = json::parse(req.body);
-		params.prompt = req_params["prompt"].get<std::string>();
+		params.prompt = std::regex_replace(params.prompt, std::regex("PROMPT"), req_params["prompt"].get<std::string>());
+
 		fprintf(stderr, std::format("Request: {}\n", req_params.dump(2)).c_str());
 		json result;
 		result["result"] = queryModel(model, vocab, params);
