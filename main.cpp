@@ -1308,6 +1308,7 @@ int main(int argc, char** argv) {
 		const json req_params = json::parse(req.body);
 		std::lock_guard<std::mutex> guard(model_state_mutex);
 		model_state.params.prompt = std::regex_replace(model_state.params.soft_prompt, std::regex("PROMPT"), req_params["prompt"].get<std::string>());
+		model_state.params.prompt = std::regex_replace(model_state.params.prompt, std::regex("USER"), req_params["user"].get<std::string>());
 		fprintf(stderr, std::format("Request: {}\n", req_params.dump(2)).c_str());
 		json result;
 		result["result"] = queryModel(model_state.model, model_state.vocab, model_state.params);
