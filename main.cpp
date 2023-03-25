@@ -1240,44 +1240,48 @@ std::string queryModel(llama_model& model, gpt_vocab& vocab, gpt_params& params)
 	}
 }
 
+struct ModelData {
+	gpt_vocab vocab;
+	llama_model model;
+	gpt_params params;
+};
 
 int main(int argc, char** argv) {
 
 	ggml_time_init();
 	const int64_t t_main_start_us = ggml_time_us();
 
-	gpt_params params;
+	ModelData model_state;
 
-	params.temp = 0.5f;
-	params.top_p = 0.99f;
-	params.n_ctx = 2048;
-	params.model = "models/13B/ggml-model-q4_0.bin";
-	params.n_threads = 16;
-	params.repeat_last_n = 64;
-	params.repeat_penalty = 1.15;
-	params.top_k = 40;
 
-	if (gpt_params_parse(argc, argv, params) == false) {
+	model_state.params.temp = 0.5f;
+	model_state.params.top_p = 0.98f;
+	model_state.params.n_ctx = 2048;
+	model_state.params.model = "models/13B/ggml-model-q4_0.bin";
+	model_state.params.n_threads = 16;
+	model_state.params.repeat_last_n = 64;
+	model_state.params.repeat_penalty = 1.15;
+	model_state.params.top_k = 40;
+	model_state.params.n_batch = 64;
+
+	if (gpt_params_parse(argc, argv, model_state.params) == false) {
 		return 1;
 	}
 
-	if (params.seed < 0) {
-		params.seed = time(NULL);
+	if (model_state.params.seed < 0) {
+		model_state.params.seed = time(NULL);
 	}
 
-	fprintf(stderr, "%s: seed = %d\n", __func__, params.seed);
+	fprintf(stderr, "%s: seed = %d\n", __func__, model_state.params.seed);
 
 
 	int64_t t_load_us = 0;
 
-	gpt_vocab vocab;
-	llama_model model;
-
 	// load the model
 	{
 		const int64_t t_start_us = ggml_time_us();
-		if (!llama_model_load(params.model, model, vocab, params.n_ctx)) {
-			fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, params.model.c_str());
+		if (!llama_model_load(model_state.params.model, model_state.model, model_state.vocab, model_state.params.n_ctx)) {
+			fprintf(stderr, "%s: failed to load model from '%s'\n", __func__, model_state.params.model.c_str());
 			return 1;
 		}
 
@@ -1288,28 +1292,31 @@ int main(int argc, char** argv) {
 	{
 		fprintf(stderr, "\n");
 		fprintf(stderr, "system_info: n_threads = %d / %d | %s\n",
-			params.n_threads, std::thread::hardware_concurrency(), llama_print_system_info());
+			model_state.params.n_threads, std::thread::hardware_concurrency(), llama_print_system_info());
 	}
 	
-	fprintf(stderr, "sampling parameters: temp = %f, top_k = %d, top_p = %f, repeat_last_n = %i, repeat_penalty = %f\n", params.temp, params.top_k, params.top_p, params.repeat_last_n, params.repeat_penalty);
+	fprintf(stderr, "sampling parameters: temp = %f, top_k = %d, top_p = %f, repeat_last_n = %i, repeat_penalty = %f\n", model_state.params.temp, model_state.params.top_k, model_state.params.top_p, model_state.params.repeat_last_n, model_state.params.repeat_penalty);
 	fprintf(stderr, "\n\n");
+
+	//model state mutex
+	std::mutex model_state_mutex;
 
 	// HTTP
 	httplib::Server svr;
 
-	svr.Post("/generate", [&params, &vocab, &model](const httplib::Request& req, httplib::Response& res) {
+	svr.Post("/generate", [&model_state_mutex, &model_state](const httplib::Request& req, httplib::Response& res) {
 		const json req_params = json::parse(req.body);
-		params.prompt = std::regex_replace(params.prompt, std::regex("PROMPT"), req_params["prompt"].get<std::string>());
-
+		std::lock_guard<std::mutex> guard(model_state_mutex);
+		model_state.params.prompt = std::regex_replace(model_state.params.soft_prompt, std::regex("PROMPT"), req_params["prompt"].get<std::string>());
 		fprintf(stderr, std::format("Request: {}\n", req_params.dump(2)).c_str());
 		json result;
-		result["result"] = queryModel(model, vocab, params);
+		result["result"] = queryModel(model_state.model, model_state.vocab, model_state.params);
 		res.set_content(result.dump(2), "application/json");
 	});
 
 	fprintf(stderr, "API listening on 0.0.0.0:8080");
 	svr.listen("0.0.0.0", 8080);
-	ggml_free(model.ctx);
+	ggml_free(model_state.model.ctx);
 }
 
 

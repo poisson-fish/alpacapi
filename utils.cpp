@@ -25,13 +25,21 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
             params.n_threads = std::stoi(argv[++i]);
         } else if (arg == "-p" || arg == "--prompt") {
             params.prompt = argv[++i];
-        } else if (arg == "-f" || arg == "--file") {
+        }else if (arg == "-f" || arg == "--file") {
+
+            std::ifstream file(argv[++i]);
+
+            std::copy(std::istreambuf_iterator<char>(file),
+                std::istreambuf_iterator<char>(),
+                back_inserter(params.prompt));
+
+        } else if (arg == "-S" || arg == "--soft-prompt") {
 
             std::ifstream file(argv[++i]);
 
             std::copy(std::istreambuf_iterator<char>(file),
                     std::istreambuf_iterator<char>(),
-                    back_inserter(params.prompt));
+                    back_inserter(params.soft_prompt));
                 
         } else if (arg == "-n" || arg == "--n_predict") {
             params.n_predict = std::stoi(argv[++i]);
